@@ -1,5 +1,5 @@
-# delta-spark==2.3.0
-pyspark==3.0.3
+delta-spark==2.0.0
+pyspark==3.2.0
 # pyarrow==9.0.0
 # fastparquet==0.8.1
 apache-airflow-providers-amazon==7.2.1

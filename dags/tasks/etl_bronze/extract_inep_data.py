@@ -8,9 +8,10 @@ from dotenv import load_dotenv
 from zipfile import ZipFile
 from io import BytesIO
 
+from delta.tables import DeltaTable
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
-from delta.tables import DeltaTable
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 
@@ -19,27 +20,33 @@ load_dotenv()
 
 class INEPDataExtractor:
     def __init__(self) -> None:
-        AWS_PACKAGES = "org.apache.hadoop:hadoop-aws:3.0.3,com.amazonaws:aws-java-sdk-bundle:1.11.271"
+        AWS_PACKAGES = "org.apache.hadoop:hadoop-aws:3.2.2,com.amazonaws:aws-java-sdk-bundle:1.11.1026"
+        DELTA_PACKAGES = "io.delta:delta-core_2.12:2.0.0,io.delta:delta-storage:2.0.0"
+
         self.spark = (
             SparkSession
             .builder
-            .config("spark.jars.packages", f"{AWS_PACKAGES}")
+            .config("spark.jars.packages", f"{AWS_PACKAGES},{DELTA_PACKAGES}")
             .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-            .config("spark.hadoop.fs.s3a.access.key", "AKIASJG5OPVC5WBZYNFY")
-            .config("spark.hadoop.fs.s3a.secret.key", "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")
+            .config("spark.hadoop.fs.s3a.access.key", getenv("access_key"))
+            .config("spark.hadoop.fs.s3a.secret.key", getenv("secret_key"))
+            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
             .getOrCreate()
         )
 
     def _check_if_file_already_downloaded(self, url: str, display_name: str) -> bool:
         try:
             metadata_df = self.spark.read.format("parquet").load("s3a://govbr-data/bronze/metadata/")
-            print(metadata_df.show(10, truncate=False))
+
             already_downloaded_files = (
                 metadata_df.filter(col("url") == url)
                 .select("display_name")
                 .rdd.flatMap(lambda x: x).collect()
             )
             logging.info(f"Already downloaded files: {already_downloaded_files}")
+
             if display_name in already_downloaded_files:
                 return True
         except:
@@ -52,15 +59,31 @@ class INEPDataExtractor:
             display_name: str = "",
             filename: str = "",
             datasource: str = "") -> None:
-        columns = ["url", "display_name", "source", "downloaded_at", "filename", "datasource"]
-        metadata_df = self.spark.createDataFrame([(url, display_name, "inep", datetime.now(), filename, datasource)],
-                                                 columns)
+        metadata = [{"url": url, "display_name": display_name, "source": "inep", "downloaded_at": datetime.now(),
+                     "filename": filename, "datasource": datasource}]
+
+        rdd = self.spark.sparkContext.parallelize(metadata)
+        schema = StructType([
+            StructField("url", StringType(), True),
+            StructField("display_name", StringType(), True),
+            StructField("source", StringType(), True),
+            StructField("downloaded_at", TimestampType(), True),
+            StructField("filename", StringType(), True),
+            StructField("datasource", StringType(), True)
+        ])
+        metadata_df = self.spark.createDataFrame(rdd, schema)
         logging.info(f"{metadata_df.show(1, truncate=False)}")
 
         try:
-
-
-        metadata_df.write.format("delta").mode("append").save("s3a://govbr-data/bronze/metadata/")
+            delta_table = DeltaTable.forPath(self.spark, "s3a://govbr-data/bronze/metadata/")
+            (
+                delta_table.alias("oldData")
+                .merge(metadata_df.alias("newData"), "oldData.url = newData.url")
+                .whenMatchedUpdateAll()
+                .whenNotMatchedInsertAll()
+            )
+        except:
+            metadata_df.write.format("delta").mode("append").save("s3a://govbr-data/bronze/metadata/")
 
     def upload_file_to_s3(self,
                           url: str,
@@ -95,15 +118,16 @@ class INEPDataExtractor:
         elif ".zip" in url:
             zip_file = ZipFile(BytesIO(response.content))
             zip_file.extractall("./data.zip")
-            csv_files_on_zip = [f"./data.zip/{file}" for file in zip_file.namelist() if ".csv" in file.lower()]
-            logging.info(f"CSV files on zip: {csv_files_on_zip}")
+            print(zip_file.namelist())
+            files_on_zip = [f"./data.zip/{file}" for file in zip_file.namelist() if file.lower().split(".")[-1] in {"csv", "txt"}]
+            logging.info(f"csv/txt files on zip: {files_on_zip}")
 
-            for file in csv_files_on_zip:
+            for file in files_on_zip:
+                s3_hook.load_file(file, f"bronze/inep/{datasource}/{file.split('/')[-1]}", "govbr-data")
                 self._update_metadata(url=url,
                                       display_name=display_name,
                                       filename=file.split("/")[-1],
                                       datasource=datasource)
-                s3_hook.load_file(file, f"bronze/inep/{datasource}/{file.split('/')[-1]}", "govbr-data")
 
             rmtree("./data.zip", ignore_errors=True)
         else:

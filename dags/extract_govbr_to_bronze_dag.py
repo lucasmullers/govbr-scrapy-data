@@ -5,6 +5,7 @@ from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python_operator import PythonOperator
 
+
 default_args = {
     "owner": "Lucas Muller",
     "depends_on_past": False,
@@ -14,7 +15,7 @@ default_args = {
 }
 
 INEP_EXTRACTOR = lazy_callable("tasks.etl_bronze.extract_inep_data.INEPDataExtractor")
-DATASOURCES = ["censo-da-educacao-superior", "enem-por-escola"]  # "censo-escolar", "enade", "enem",
+DATASOURCES = ["censo-da-educacao-superior", "enem-por-escola", "censo-escolar", "enade"]  #, "enem",
 
 
 def prep_args(data):

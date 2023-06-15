@@ -18,10 +18,10 @@ from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 load_dotenv()
 
 
-class INEPDataExtractor:
+class ANPDataExtractor:
     def __init__(self) -> None:
-        AWS_PACKAGES = "org.apache.hadoop:hadoop-aws:3.2.2,com.amazonaws:aws-java-sdk-bundle:1.11.1026"
-        DELTA_PACKAGES = "io.delta:delta-core_2.12:2.0.0,io.delta:delta-storage:2.0.0"
+        AWS_PACKAGES = "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262"
+        DELTA_PACKAGES = "io.delta:delta-core_2.12:2.3.0,io.delta:delta-storage:2.3.0"
 
         self.spark = (
             SparkSession
@@ -29,7 +29,7 @@ class INEPDataExtractor:
             .config("spark.jars.packages", f"{AWS_PACKAGES},{DELTA_PACKAGES}")
             .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
             .config("spark.hadoop.fs.s3a.access.key", getenv("access_key"))
-            .config("spark.hadoop.fs.s3a.secret.key", getenv("secret_key"))
+            .config("spark.hadoop.fs.s3a.secret.key", getenv("secret_access_key"))
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
             .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
             .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
@@ -48,6 +48,7 @@ class INEPDataExtractor:
             logging.info(f"Already downloaded files: {already_downloaded_files}")
 
             if display_name in already_downloaded_files:
+                logging.info("File from with Dysplay Name {} from URL {} already downloaded.".format(display_name, url))
                 return True
         except:
             logging.info("File not found in metadata.")
@@ -57,10 +58,12 @@ class INEPDataExtractor:
             self,
             url: str = "",
             display_name: str = "",
-            filename: str = "",
-            datasource: str = "") -> None:
-        metadata = [{"url": url, "display_name": display_name, "source": "inep", "downloaded_at": datetime.now(),
-                     "filename": filename, "datasource": datasource}]
+            filename: str = "") -> None:
+        print("AWS ACCESS KEY: ", getenv("access_key"))
+        print("AWS SECRET KEY: ", getenv("secret_access_key"))
+
+        metadata = [{"url": url, "display_name": display_name, "source": "ANP", "downloaded_at": datetime.now(),
+                     "filename": filename, "datasource": "precos-de-combustiveis"}]
 
         rdd = self.spark.sparkContext.parallelize(metadata)
         schema = StructType([
@@ -88,7 +91,6 @@ class INEPDataExtractor:
     def upload_file_to_s3(self,
                           url: str,
                           display_name: str,
-                          datasource: str = "enem",
                           conn_id: str = "aws",
                           **kwargs) -> None:
 
@@ -108,13 +110,12 @@ class INEPDataExtractor:
             filename = url.split("/")[-1]
             with open(f"./{filename}", "wb") as f:
                 f.write(response.content)
-            s3_hook.load_file(f"./{filename}", f"bronze/inep/{datasource}/{filename}", "govbr-data")
+            s3_hook.load_file(f"./{filename}", f"bronze/ANP/{filename}", "govbr-data", replace=True)
             remove(f"./{filename}")
 
             self._update_metadata(url=url,
                                   display_name=display_name,
-                                  filename=filename.split("/")[-1],
-                                  datasource=datasource)
+                                  filename=filename.split("/")[-1])
         elif ".zip" in url:
             zip_file = ZipFile(BytesIO(response.content))
             zip_file.extractall("./data.zip")
@@ -123,11 +124,10 @@ class INEPDataExtractor:
             logging.info(f"csv/txt files on zip: {files_on_zip}")
 
             for file in files_on_zip:
-                s3_hook.load_file(file, f"bronze/inep/{datasource}/{file.split('/')[-1]}", "govbr-data")
+                s3_hook.load_file(file, f"bronze/ANP/{file.split('/')[-1]}", "govbr-data", replace=True)
                 self._update_metadata(url=url,
                                       display_name=display_name,
-                                      filename=file.split("/")[-1],
-                                      datasource=datasource)
+                                      filename=file.split("/")[-1])
 
             rmtree("./data.zip", ignore_errors=True)
         else:

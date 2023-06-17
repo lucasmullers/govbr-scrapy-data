@@ -1,4 +1,4 @@
-delta-spark==2.4.0
+delta-spark==2.3.0
 pyarrow==9.0.0
 fastparquet==0.8.1
 apache-airflow-providers-amazon==8.1.0

@@ -20,8 +20,9 @@ load_dotenv()
 
 class ANPDataExtractor:
     def __init__(self) -> None:
-        AWS_PACKAGES = "org.apache.hadoop:hadoop-aws:3.3.1,com.amazonaws:aws-java-sdk-bundle:1.11.901"
-        DELTA_PACKAGES = "io.delta:delta-core_2.12:2.4.0,io.delta:delta-storage:2.4.0"
+
+        AWS_PACKAGES = "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262"
+        DELTA_PACKAGES = "io.delta:delta-core_2.12:2.3.0,io.delta:delta-storage:2.3.0"
 
         self.spark = (
             SparkSession
@@ -37,6 +38,7 @@ class ANPDataExtractor:
         )
 
     def _check_if_file_already_downloaded(self, url: str, display_name: str) -> bool:
+
         try:
             metadata_df = self.spark.read.format("delta").load("s3a://govbr-data/bronze/metadata/")
 
@@ -58,12 +60,20 @@ class ANPDataExtractor:
             self,
             url: str = "",
             display_name: str = "",
-            filename: str = "") -> None:
-        print("AWS ACCESS KEY: ", getenv("access_key"))
-        print("AWS SECRET KEY: ", getenv("secret_access_key"))
+            filename: str = "",
+            downloaded_at: datetime = datetime(1970, 1, 1)) -> None:
 
-        metadata = [{"url": url, "display_name": display_name, "source": "ANP", "downloaded_at": datetime.now(),
-                     "filename": filename, "datasource": "precos-de-combustiveis"}]
+        metadata = [
+            {
+                "url": url,
+                "display_name": display_name,
+                "source": "ANP",
+                "downloaded_at": downloaded_at,
+                "filename": filename,
+                "datasource": "precos-de-combustiveis"
+            }
+        ]
+        print(metadata)
 
         rdd = self.spark.sparkContext.parallelize(metadata)
         schema = StructType([
@@ -86,13 +96,13 @@ class ANPDataExtractor:
                 .whenNotMatchedInsertAll()
                 .execute()
             )
-        except Exception as error:
-            logging.info("Error: ", error)
+        except:
             metadata_df.write.format("delta").mode("overwrite").save("s3a://govbr-data/bronze/metadata/")
 
     def upload_file_to_s3(self,
                           url: str,
                           display_name: str,
+                          ds=None,
                           conn_id: str = "aws",
                           **kwargs) -> None:
 
@@ -108,6 +118,8 @@ class ANPDataExtractor:
         if response.status_code != 200:
             raise Exception(f"Error downloading file from {url}! Status code: {response.status_code}")
 
+        execution_date = datetime.strptime(ds, "%Y-%m-%d")
+
         if ".csv" in url:
             filename = url.split("/")[-1]
             with open(f"./{filename}", "wb") as f:
@@ -117,7 +129,8 @@ class ANPDataExtractor:
 
             self._update_metadata(url=url,
                                   display_name=display_name,
-                                  filename=filename.split("/")[-1])
+                                  filename=filename.split("/")[-1],
+                                  downloaded_at=execution_date)
         elif ".zip" in url:
             zip_file = ZipFile(BytesIO(response.content))
             zip_file.extractall("./data.zip")
@@ -129,7 +142,8 @@ class ANPDataExtractor:
                 s3_hook.load_file(file, f"bronze/ANP/{file.split('/')[-1]}", "govbr-data", replace=True)
                 self._update_metadata(url=url,
                                       display_name=display_name,
-                                      filename=file.split("/")[-1])
+                                      filename=file.split("/")[-1],
+                                      downloaded_at=execution_date)
 
             rmtree("./data.zip", ignore_errors=True)
         else:

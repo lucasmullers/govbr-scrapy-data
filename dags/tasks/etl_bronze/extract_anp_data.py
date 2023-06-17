@@ -20,8 +20,8 @@ load_dotenv()
 
 class ANPDataExtractor:
     def __init__(self) -> None:
-        AWS_PACKAGES = "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262"
-        DELTA_PACKAGES = "io.delta:delta-core_2.12:2.3.0,io.delta:delta-storage:2.3.0"
+        AWS_PACKAGES = "org.apache.hadoop:hadoop-aws:3.3.1,com.amazonaws:aws-java-sdk-bundle:1.11.901"
+        DELTA_PACKAGES = "io.delta:delta-core_2.12:2.4.0,io.delta:delta-storage:2.4.0"
 
         self.spark = (
             SparkSession
@@ -38,7 +38,7 @@ class ANPDataExtractor:
 
     def _check_if_file_already_downloaded(self, url: str, display_name: str) -> bool:
         try:
-            metadata_df = self.spark.read.format("parquet").load("s3a://govbr-data/bronze/metadata/")
+            metadata_df = self.spark.read.format("delta").load("s3a://govbr-data/bronze/metadata/")
 
             already_downloaded_files = (
                 metadata_df.filter(col("url") == url)
@@ -84,9 +84,11 @@ class ANPDataExtractor:
                 .merge(metadata_df.alias("newData"), "oldData.url = newData.url")
                 .whenMatchedUpdateAll()
                 .whenNotMatchedInsertAll()
+                .execute()
             )
-        except:
-            metadata_df.write.format("delta").mode("append").save("s3a://govbr-data/bronze/metadata/")
+        except Exception as error:
+            logging.info("Error: ", error)
+            metadata_df.write.format("delta").mode("overwrite").save("s3a://govbr-data/bronze/metadata/")
 
     def upload_file_to_s3(self,
                           url: str,

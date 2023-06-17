@@ -34,7 +34,7 @@ def extract_anp(start, anp_extractor, finish):
     extract = PythonOperator.partial(
         task_id="scrapy_anp",
         python_callable=anp_extractor.upload_file_to_s3,
-        max_active_tis_per_dag=2,
+        max_active_tis_per_dag=1,
         dag=dag,
     ).expand(op_kwargs=scrapy_files_from_anp.output.map(prep_args))
 

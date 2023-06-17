@@ -15,6 +15,7 @@ default_args = {
 }
 
 ANP_EXTRACTOR = lazy_callable("tasks.etl_bronze.extract_anp_data.ANPDataExtractor")
+# from tasks.etl_bronze.extract_anp_data import ANPDataExtractor
 
 
 def prep_args(data):
